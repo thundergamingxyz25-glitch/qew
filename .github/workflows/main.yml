@@ -1,0 +1,85 @@
+name: 24/7 Periodic Automation
+
+on:
+  schedule:
+    # Runs every 30 minutes (* */1 * * * for hourly, etc.)
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+permissions:
+  contents: write
+
+jobs:
+  run-automation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate automation.py
+        run: |
+          cat << 'EOF' > automation.py
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          STATE_FILE = "state.json"
+
+          def load_state():
+              if os.path.exists(STATE_FILE):
+                  with open(STATE_FILE, "r") as f:
+                      try:
+                          return json.load(f)
+                      except json.JSONDecodeError:
+                          pass
+              return {"total_runs": 0, "history": []}
+
+          def save_state(state):
+              with open(STATE_FILE, "w") as f:
+                  json.dump(state, f, indent=2)
+
+          def main():
+              state = load_state()
+              now_iso = datetime.now(timezone.utc).isoformat()
+              
+              print(f"[{now_iso}] Running periodic task...")
+
+              # --- CUSTOM LOGIC GOES HERE ---
+              # Examples: fetch an API, check data, or perform tasks
+              # ------------------------------
+
+              state["total_runs"] += 1
+              state["last_run"] = now_iso
+              state["history"].append(now_iso)
+              state["history"] = state["history"][-20:]
+
+              save_state(state)
+              print(f"Task completed successfully. Total runs: {state['total_runs']}")
+
+          if __name__ == "__main__":
+              main()
+          EOF
+
+      - name: Execute Automation Script
+        run: python -u automation.py
+
+      - name: Commit and Push State Updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Only commit if state.json was created or updated
+          if git status --porcelain | grep -q 'state.json'; then
+            git add state.json
+            git commit -m "chore(auto): update state [skip ci]"
+            git push
+          else
+            echo "No state changes to commit."
+          fi
